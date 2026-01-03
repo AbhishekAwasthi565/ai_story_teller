@@ -1,0 +1,7 @@
+streamlit==1.46.1
+langchain==0.3.12
+langchain-community==0.3.12
+langchain-huggingface==1.2.0
+langchain-core==0.3.25
+huggingface_hub==0.27.0
+python-dotenv==1.0.1
