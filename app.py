@@ -16,17 +16,13 @@ with st.sidebar:
         "Enter Hugging Face API Token:", type="password"
     )
     st.info("Get a free token at https://huggingface.co/settings/tokens")
-
     memory_k = st.slider("Memory Window (k)", 1, 10, 3)
 
-# ---------------- Guard ----------------
 if not hf_token:
     st.warning("Please enter your Hugging Face API token.")
     st.stop()
 
-os.environ["HF_TOKEN"] = hf_token
-
-# ---------------- HF Client (STABLE) ----------------
+# ---------------- HF Client (STABLE API) ----------------
 client = InferenceClient(
     model="mistralai/Mistral-7B-Instruct-v0.2",
     token=hf_token,
@@ -36,7 +32,7 @@ client = InferenceClient(
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# ---------------- Display Chat ----------------
+# ---------------- Display History ----------------
 for msg in st.session_state.history:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -53,31 +49,32 @@ if user_input:
         st.markdown(user_input)
 
     # ---- Limited Memory ----
-    recent_history = st.session_state.history[-memory_k * 2 :]
+    recent = st.session_state.history[-memory_k * 2 :]
 
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a whimsical, child-friendly narrator "
-                "telling the story of Little Red Riding Hood. "
-                "Keep answers short and simple."
-            ),
-        }
-    ] + recent_history
+    # ---- Build Instruct Prompt (CORRECT) ----
+    prompt = (
+        "<s>[INST] You are a child-friendly storyteller narrating "
+        "Little Red Riding Hood. Keep answers short and simple.\n\n"
+    )
 
-    # ---- Model Call (NO ERRORS) ----
-    response = client.chat.completions.create(
-        messages=messages,
-        max_tokens=300,
+    for msg in recent:
+        if msg["role"] == "user":
+            prompt += f"User: {msg['content']}\n"
+        else:
+            prompt += f"Assistant: {msg['content']}\n"
+
+    prompt += "Assistant: [/INST]"
+
+    # ---- Stable Generation Call ----
+    response = client.text_generation(
+        prompt,
+        max_new_tokens=300,
         temperature=0.7,
     )
 
-    assistant_reply = response.choices[0].message.content
-
     with st.chat_message("assistant"):
-        st.markdown(assistant_reply)
+        st.markdown(response)
 
     st.session_state.history.append(
-        {"role": "assistant", "content": assistant_reply}
+        {"role": "assistant", "content": response}
     )
