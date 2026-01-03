@@ -1,75 +1,83 @@
-
-
+import streamlit as st
 import os
-import gradio as gr
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
-from langchain.chains import ConversationChain
-from langchain.memory import ConversationBufferWindowMemory
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from huggingface_hub import InferenceClient
 
-def launch_storyteller():
-    # --- State Management Function ---
-    def predict(message, history, api_key, window_size):
-        if not api_key:
-            return history + [["User", "Please enter an API Key!"]]
-        
-        try:
-            os.environ["HUGGING_FACE_HUB_TOKEN"] = api_key
-            
-            # 1. Setup Model
-            llm = HuggingFaceEndpoint(
-                repo_id="mistralai/Mistral-7B-Instruct-v0.2",
-                task="text-generation",
-                max_new_tokens=512,
-                temperature=0.7
-            )
-            chat_model = ChatHuggingFace(llm=llm)
+# ---------------- Page Config ----------------
+st.set_page_config(page_title="Limited Memory Storyteller", page_icon="📖")
+st.title("📖 Children's Story AI Narrator")
+st.markdown(
+    "This AI uses **Limited Memory** to discuss the story of *Little Red Riding Hood*."
+)
 
-            # 2. Setup Memory 
-            # In Gradio, we recreate the chain/memory context for the current session
-            memory = ConversationBufferWindowMemory(k=window_size, return_messages=True)
-            
-            # Rehydrate memory from Gradio's history
-            for user_msg, ai_msg in history:
-                memory.save_context({"input": user_msg}, {"output": ai_msg})
+# ---------------- Sidebar ----------------
+with st.sidebar:
+    st.header("Settings")
+    hf_token = st.text_input(
+        "Enter Hugging Face API Token:", type="password"
+    )
+    st.info("Get a free token at https://huggingface.co/settings/tokens")
 
-            # 3. Prompt Template
-            prompt = ChatPromptTemplate.from_messages([
-                SystemMessagePromptTemplate.from_template(
-                    "You are a whimsical narrator for 'Little Red Riding Hood'. Keep responses concise and child-friendly."
-                ),
-                MessagesPlaceholder(variable_name="history"),
-                HumanMessagePromptTemplate.from_template("{input}")
-            ])
+    memory_k = st.slider("Memory Window (k)", 1, 10, 3)
 
-            # 4. Chain
-            story_bot = ConversationChain(llm=chat_model, memory=memory, prompt=prompt)
-            
-            # Get response
-            response = story_bot.predict(input=message)
-            return response
+# ---------------- Guard ----------------
+if not hf_token:
+    st.warning("Please enter your Hugging Face API token.")
+    st.stop()
 
-        except Exception as e:
-            return f"Error: {str(e)}"
+os.environ["HF_TOKEN"] = hf_token
 
-    # --- Gradio UI Layout ---
-    with gr.Blocks(theme=gr.themes.Soft()) as demo:
-        gr.Markdown("# 📖 Children's Story AI Narrator")
-        gr.Markdown("This AI uses **Limited Memory** to discuss the story of *Little Red Riding Hood*.")
-        
-        with gr.Row():
-            with gr.Column(scale=1):
-                api_key_input = gr.Textbox(label="Hugging Face API Token", type="password", placeholder="hf_...")
-                window_slider = gr.Slider(minimum=1, maximum=10, value=3, step=1, label="Memory Window (k)")
-            
-            with gr.Column(scale=3):
-                chatbot = gr.ChatInterface(
-                    fn=predict,
-                    additional_inputs=[api_key_input, window_slider],
-                    type="tuples" # Required for standard history handling
-                )
+# ---------------- HF Client (STABLE) ----------------
+client = InferenceClient(
+    model="mistralai/Mistral-7B-Instruct-v0.2",
+    token=hf_token,
+)
 
-    demo.launch(debug=True)
+# ---------------- Session State ----------------
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-if __name__ == "__main__":
-    launch_storyteller()
+# ---------------- Display Chat ----------------
+for msg in st.session_state.history:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# ---------------- User Input ----------------
+user_input = st.chat_input("What happens next?")
+
+if user_input:
+    st.session_state.history.append(
+        {"role": "user", "content": user_input}
+    )
+
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    # ---- Limited Memory ----
+    recent_history = st.session_state.history[-memory_k * 2 :]
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a whimsical, child-friendly narrator "
+                "telling the story of Little Red Riding Hood. "
+                "Keep answers short and simple."
+            ),
+        }
+    ] + recent_history
+
+    # ---- Model Call (NO ERRORS) ----
+    response = client.chat.completions.create(
+        messages=messages,
+        max_tokens=300,
+        temperature=0.7,
+    )
+
+    assistant_reply = response.choices[0].message.content
+
+    with st.chat_message("assistant"):
+        st.markdown(assistant_reply)
+
+    st.session_state.history.append(
+        {"role": "assistant", "content": assistant_reply}
+    )
